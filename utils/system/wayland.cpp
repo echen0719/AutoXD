@@ -30,7 +30,7 @@ gboolean clickingTimer(gpointer data) {
 
 // https://libportal.org/signal.GlobalShortcutsSession.activated.html
 void hotkeyToggle(XdpGlobalShortcutsSession* source, gchar* id, guint64 timestamp, GVariant* options, gpointer data) {
-    if (strcmp(id, "toggle") == 0) { // checks if string given equals toggle
+    if (g_strcmp0(id, "toggle") == 0) { // checks if string given equals toggle
         clicking = !clicking;
     }
 }
@@ -45,7 +45,11 @@ Type: gpointer | Name: data | Function: Custom data to pass
 */
 
 void call(GObject* source, GAsyncResult* result, gpointer data) {
-    if (!xdp_session_start_finish(session, result, nullptr)) { // if session fails to start, exit
+    GError* error = nullptr;
+
+    if (!xdp_session_start_finish(session, result, &error)) { // if session fails to start, exit
+        g_printerr("Session start error: %s\n", error ? error -> message : "Unknown");
+        g_clear_error(&error);
         g_main_loop_quit(loop);
         return;
     }
@@ -55,8 +59,12 @@ void call(GObject* source, GAsyncResult* result, gpointer data) {
 }
 
 void initMouse(GObject* source, GAsyncResult* result, gpointer data) {
-    session = xdp_portal_create_remote_desktop_session_finish(portal, result, nullptr); // creates the session
+    GError* error = nullptr;
+
+    session = xdp_portal_create_remote_desktop_session_finish(portal, result, &error); // creates the session
     if (!session) {
+        g_printerr("RemoteDesktop error: %s\n", error ? error -> message : "Unknown");
+        g_clear_error(&error);
         g_main_loop_quit(loop);
         return;
     }
@@ -65,8 +73,12 @@ void initMouse(GObject* source, GAsyncResult* result, gpointer data) {
 }
 
 void initKeyboard(GObject* source, GAsyncResult* result, gpointer data) {
-    shortcutSession = xdp_portal_create_global_shortcuts_session_finish(portal, result, nullptr); // creates the shortcut listener
+    GError* error = nullptr;
+
+    shortcutSession = xdp_portal_create_global_shortcuts_session_finish(portal, result, &error); // creates the shortcut listener
     if (!shortcutSession) {
+        g_printerr("GlobalShortcuts error: %s\n", error ? error -> message : "Unknown");
+        g_clear_error(&error);
         g_main_loop_quit(loop);
         return;
     }
