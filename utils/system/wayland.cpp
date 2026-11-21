@@ -1,3 +1,4 @@
+#include <libportal/globalshortcuts.h>
 #include <libportal/portal.h>
 #include <libportal/remote.h>
 
@@ -7,12 +8,31 @@
 GMainLoop* loop = nullptr; // handles the main thread
 XdpPortal* portal = nullptr;
 XdpSession* session = nullptr;
+XdpGlobalShortcutsSession* shortcutSession = nullptr;
+
+GPtrArray* shortcuts = nullptr;
+gboolean clicking = false;
+guint timer = 0; // must use glib's types
+
+int interval = 1;
 
 // https://libportal.org/index.html
 
 void click() {
     xdp_session_pointer_button(session, BTN_LEFT, XDP_BUTTON_PRESSED);
     xdp_session_pointer_button(session, BTN_LEFT, XDP_BUTTON_RELEASED);
+}
+
+gboolean clickingTimer(gpointer data) {
+    if (clicking) click();
+    return G_SOURCE_CONTINUE; // equivalent of true
+}
+
+// https://libportal.org/signal.GlobalShortcutsSession.activated.html
+void hotkeyToggle(XdpGlobalShortcutsSession* source, gchar* id, guint64 timestamp, GVariant* options, gpointer data) {
+    if (strcmp(id, "toggle") == 0) { // checks if string given equals toggle
+        clicking = !clicking;
+    }
 }
 
 /*
@@ -31,13 +51,10 @@ void call(GObject* source, GAsyncResult* result, gpointer data) {
     }
 
     // async, no blocking
-    g_timeout_add(1, [](gpointer) -> gboolean {
-        click();
-        return G_SOURCE_CONTINUE;
-    }, nullptr);
+    timer = g_timeout_add(interval, clickingTimer, nullptr);
 }
 
-void init(GObject* source, GAsyncResult* result, gpointer data) {
+void initMouse(GObject* source, GAsyncResult* result, gpointer data) {
     session = xdp_portal_create_remote_desktop_session_finish(portal, result, nullptr); // creates the session
     if (!session) {
         g_main_loop_quit(loop);
@@ -45,6 +62,21 @@ void init(GObject* source, GAsyncResult* result, gpointer data) {
     }
 
     xdp_session_start(session, nullptr, nullptr, call, nullptr);
+}
+
+void initKeyboard(GObject* source, GAsyncResult* result, gpointer data) {
+    shortcutSession = xdp_portal_create_global_shortcuts_session_finish(portal, result, nullptr); // creates the shortcut listener
+    if (!shortcutSession) {
+        g_main_loop_quit(loop);
+        return;
+    }
+
+    g_signal_connect(shortcutSession, "activated", G_CALLBACK(hotkeyToggle), nullptr);
+
+    shortcuts = g_ptr_array_new_with_free_func ((GDestroyNotify) xdp_global_shortcut_free); // array
+    g_ptr_array_add(shortcuts, xdp_global_shortcut_new("toggle", "Toggle autoclicker", "F6"));
+
+    xdp_global_shortcuts_session_bind_shortcuts(shortcutSession, shortcuts, nullptr, nullptr, nullptr, nullptr);
 }
 
 int main() {
@@ -57,8 +89,10 @@ int main() {
         XDP_OUTPUT_NONE,                                        // don't ask to select which monitor/window
         XDP_REMOTE_DESKTOP_FLAG_NONE,          // use current session options
         XDP_CURSOR_MODE_HIDDEN,                       // hides the created cursor (distracting sometimes)
-        nullptr, init, nullptr                                          // calls our init function
+        nullptr, initMouse, nullptr                              // calls the init function
     );
+
+    xdp_portal_create_global_shortcuts_session(portal, nullptr, initKeyboard, nullptr);
 
     g_main_loop_run(loop);
 
@@ -66,6 +100,13 @@ int main() {
         xdp_session_close(session);
         g_object_unref(session);
     }
+
+    if (shortcutSession) {
+        xdp_global_shortcuts_session_close(shortcutSession);
+        g_object_unref(shortcutSession);
+    }
+
+    if (shortcuts) g_ptr_array_unref(shortcuts);
 
     g_object_unref(portal); // unbindings
     g_main_loop_unref(loop);
@@ -76,7 +117,8 @@ int main() {
 /*
 Basic structure goes:
 - Create a main thread
-- Create portal which requests a session
-- Session does clicking
-- Exits, ending thread
+- Create portal which requests a mouse session
+- Then requests a keyboard session
+- Sessions listen for keybind and does clicking
+- Exits, ending thread, clearing
 */
