@@ -134,7 +134,7 @@ bool registerApp() { // to access GlobalShortcuts
     return true;
 }
 
-int main() {
+int runWayland() {
     if (!registerApp()) return 1;
 
     loop = g_main_loop_new(nullptr, false);
