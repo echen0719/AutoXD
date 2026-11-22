@@ -5,16 +5,20 @@
 #include <linux/input-event-codes.h>
 #include <glib.h>
 
+const char* appID = "echen0719.autoxd";
+
+GApplication* app = nullptr;
 GMainLoop* loop = nullptr; // handles the main thread
 XdpPortal* portal = nullptr;
+
 XdpSession* session = nullptr;
 XdpGlobalShortcutsSession* shortcutSession = nullptr;
 
 GPtrArray* shortcuts = nullptr;
+
 gboolean clicking = false;
 guint timer = 0; // must use glib's types
-
-int interval = 1;
+guint interval = 1;
 
 // https://libportal.org/index.html
 
@@ -91,7 +95,48 @@ void initKeyboard(GObject* source, GAsyncResult* result, gpointer data) {
     xdp_global_shortcuts_session_bind_shortcuts(shortcutSession, shortcuts, nullptr, nullptr, nullptr, nullptr);
 }
 
+bool registerApp() { // to access GlobalShortcuts
+    GError* error = nullptr;
+
+    // reverse DNS like for Java packages
+    app = g_application_new(appID, G_APPLICATION_NON_UNIQUE); // glib registration, non-unique allows multiple instances
+    if (!g_application_register(app, nullptr, &error)) {
+        g_printerr("Application registeration error: %s\n", error ? error -> message : "Unknown");
+        g_clear_error(&error);
+        g_clear_object(&app);
+        return false;
+    }
+
+    GDBusConnection* bus = g_bus_get_sync(G_BUS_TYPE_SESSION, nullptr, &error);
+    if (!bus) {
+        g_printerr("D-Bus error: %s\n", error ? error -> message : "Unknown");
+        g_clear_error(&error);
+        return false;
+    }
+
+    GVariant *parameters = g_variant_new("(sa{sv})", appID, NULL); // passes an empty dict
+
+    // basically: gdbus call ...stuff... org.freedesktop.host.portal.Registry.Register "echen0719.autoxd"
+    GVariant* result = g_dbus_connection_call_sync(
+        bus, "org.freedesktop.portal.Desktop", "/org/freedesktop/portal/desktop", "org.freedesktop.host.portal.Registry",
+        "Register", parameters, G_VARIANT_TYPE("()"), G_DBUS_CALL_FLAGS_NONE, -1, nullptr, &error
+    );
+
+    if (!result) {
+        g_printerr("Portal registeration error: %s\n", error ? error -> message : "Unknown");
+        g_clear_error(&error);
+        return false;
+    }
+
+    g_object_unref(bus);
+    g_variant_unref(result);
+
+    return true;
+}
+
 int main() {
+    if (!registerApp()) return 1;
+
     loop = g_main_loop_new(nullptr, false);
     portal = xdp_portal_new();
 
@@ -122,13 +167,14 @@ int main() {
 
     g_object_unref(portal); // unbindings
     g_main_loop_unref(loop);
+    g_object_unref(app);
 
     return 0;
 }
 
 /*
 Basic structure goes:
-- Create a main thread
+- Create a main thread and register it with glib/portal
 - Create portal which requests a mouse session
 - Then requests a keyboard session
 - Sessions listen for keybind and does clicking
